@@ -67,8 +67,9 @@ Score
     full_prompt += bos_tokenEssay
     full_prompt += instruct_message
     full_prompt += "\n" + '[INST]' + question
-    full_prompt += " [/INST]\n\n"
-    full_prompt += answer
+    full_prompt += " [/INST]\n"
+    full_prompt += answer + "\n"
+    full_prompt += score
     full_prompt += eos_token
 
     return full_prompt
