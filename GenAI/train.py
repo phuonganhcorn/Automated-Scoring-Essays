@@ -92,8 +92,8 @@ def config_model(model):
     model = prepare_model_for_kbit_training(model)
     # Configure LoRA model
     config = LoraConfig(
-    	# Use DoRA for finetuning
-    	# use_dora = True, 	# Comment this if occur an error 
+        # Use DoRA for finetuning
+        use_dora=True,  # Comment this if occur an error
         r=32,
         lora_alpha=64,
         target_modules=[
@@ -101,66 +101,88 @@ def config_model(model):
             "k_proj",
             "v_proj",
             "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
+            "gate",
+            "w1",
+            "w2",
+            "w3",
             "lm_head",
         ],
         bias="none",
         lora_dropout=0.05,
-	use_dora=True,
         task_type="CAUSAL_LM",
     )
 
     # Get the LoRA model
     model = get_peft_model(model, config)
 
-    # Configure Fully Sharded Data Parallel (FSDP)
+
     fsdp_plugin = FullyShardedDataParallelPlugin(
         state_dict_config=FullStateDictConfig(offload_to_cpu=True, rank0_only=False),
         optim_state_dict_config=FullOptimStateDictConfig(offload_to_cpu=True, rank0_only=False),
     )
 
-    # Initialize the Accelerator
     accelerator = Accelerator(fsdp_plugin=fsdp_plugin)
     model = accelerator.prepare_model(model)
-
-
     return model
 
 
+
 def train_model(tokenized_train_dataset, tokenized_val_dataset, model, tokenizer):
-    output_dir = './trained-model/mistral'
+    # Set device to use GPU if available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
 
+    # Move the model to the selected device
+    # model = model.to(device)
+    # Specify GPU index for tokenized_train_dataset
+    # Specify GPU indices for tokenized_train_dataset
+    gpu_indices = [0, 1]  # Choose the GPU indices you want to use
+    for id in tokenized_train_dataset.keys():
+        tokenized_train_dataset[id] = tokenized_train_dataset[id].to(f"cuda:{gpu_indices[0]}")  # Move dataset to the first GPU
 
+    for id2 in tokenized_val_dataset.keys():
+        tokenized_val_dataset[id2] = tokenized_val_dataset[id2].to(f"cuda:{gpu_indices[1]}")  # Move dataset to the second GPU	
+    # Set up DataParallel to utilize multiple GPUs
+    
+    if torch.cuda.device_count() > 1:
+        print("Using", torch.cuda.device_count(), "GPUs!")
+        model.is_parallelizable = True
+        model.model_parallel = True
+
+    # Use wandb to log down the checkpoint
+    wandb_project = "gamaft-total" 
+    if len(wandb_project) > 0:
+        os.environ["WANDB_PROJECT"] = wandb_project
+
+    output_dir = './trained-model/llama/'
     trainer = transformers.Trainer(
         model=model,
         train_dataset=tokenized_train_dataset,
         eval_dataset=tokenized_val_dataset,
         args=transformers.TrainingArguments(
             output_dir=output_dir,
-            #num_train_epochs=10,
             warmup_steps=1,
             per_device_train_batch_size=2,
+            per_gpu_train_batch_size=2,
+            auto_find_batch_size=True,    # need to install accelerate library
             gradient_accumulation_steps=1,
             gradient_checkpointing=True,
-	    num_train_epochs = 10, 
-            max_steps=-1,
+            max_steps=5,
+            num_train_epochs = 3,
             learning_rate=2e-5,
             fp16=True,
             optim="paged_adamw_8bit",
-            logging_steps=10,
+            logging_steps=50,
             logging_dir='./logs',
             save_strategy="steps",
-            save_steps=200,
-            #evaluation_strategy="epoch",
+            save_steps=5,
             evaluation_strategy="steps",
-            eval_steps=10,
+            eval_steps=50,
             do_eval=True,
-            #report_to="wandb",		# Remove comment to use wandb 
-            run_name=f"{output_dir}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+            overwrite_output_dir=False,
+            report_to = "wandb",
+            run_name=f"{output_dir}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}",
         ),
-        #accelerator=Accelerator(),
         data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
     )
 
@@ -168,9 +190,13 @@ def train_model(tokenized_train_dataset, tokenized_val_dataset, model, tokenizer
     model.config.use_cache = False
     trainer.train()    
 
+    # Push to hub
+    hub_model_id = "Phanh2532/ASE-GenAI"
+    trainer.model.push_to_hub(hub_model_id, use_temp_dir=False, token="")
+    tokenizer.push_to_hub(hub_model_id, use_temp_dir=False, token="")
+
 
 if __name__ == "__main__":
-   
     # Load the base model and tokenizer
     base_model, tokenizer = load_base_model()
 
