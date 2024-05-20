@@ -111,7 +111,7 @@ def train_and_evaluate_model(training_vectors, y_train, testing_vectors, y_test)
 if __name__ == "__main__":
     # Paths to data files
     training_set_path = "./Data/training_set_rel3.tsv"
-    processed_data_path = "./Data/Processed_data.csv"
+    processed_data_path = "./Data/processed-train-data.csv"
 
     # Load and process data
     X, y = load_and_process_data(training_set_path, processed_data_path)
