@@ -1,4 +1,8 @@
 nltk
+numpy
+pandas
+keras
+scikit-learn
 tensorflow
 gensim
 gradio
